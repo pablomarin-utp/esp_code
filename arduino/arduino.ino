@@ -11,7 +11,7 @@ const char* hostname = "esp32-bridge";
 #define LED_PIN 2
 #define TRIG_PIN 5
 #define ECHO_PIN 18
-#define DETECTION_DISTANCE_CM 45
+#define DETECTION_DISTANCE_CM 40
 
 WebServer server(80);
 String cam_ip = "";
@@ -163,19 +163,14 @@ void loop() {
 
   motionDetected = (lastDistanceCm > 0 && lastDistanceCm <= DETECTION_DISTANCE_CM);
 
-  static unsigned long lastReport = 0;
-  unsigned long now = millis();
-  if (now - lastReport >= 500) {  // Reportar cada 500ms al navegador
-    Serial.print("duration raw: ");
-    Serial.print(duration);
-    Serial.print(" us | Distancia: ");
-    if (lastDistanceCm >= 0) {
-      Serial.print(lastDistanceCm, 1);
-      Serial.println(" cm");
-    } else {
-      Serial.println("sin lectura");
-    }
-    lastReport = now;
+  Serial.print("duration raw: ");
+  Serial.print(duration);
+  Serial.print(" us | Distancia: ");
+  if (lastDistanceCm >= 0) {
+    Serial.print(lastDistanceCm, 1);
+    Serial.println(" cm");
+  } else {
+    Serial.println("sin lectura");
   }
 
   delay(60); // el HC-SR04 necesita mínimo 60ms entre mediciones
