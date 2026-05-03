@@ -115,9 +115,10 @@ void handleCapture() {
     return;
   }
 
-  server.sendHeader("Content-Type", "image/jpeg");
-  server.sendHeader("Content-Length", String(fb->len));
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.setContentLength(fb->len);
+  server.send(200, "image/jpeg", "");
   server.client().write(fb->buf, fb->len);
   esp_camera_fb_return(fb);
 }

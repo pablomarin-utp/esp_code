@@ -3,117 +3,85 @@
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
 
-const char* ssid = "MARIN";
+const char* ssid     = "MARIN";
 const char* password = "10028370";
 
-const char* hostname = "esp32-bridge";
+const char* hostname    = "esp32-bridge";
 const char* backend_url = "https://sternum-untaxed-vigorous.ngrok-free.dev/api/v1/esp";
 
-#define LED_PIN 2
-#define TRIG_PIN 5
-#define ECHO_PIN 18
+#define LED_BOARD  2   // LED integrado en la placa
+#define LED_EXT    26  // LED externo (activo en HIGH)
+#define FAN_PIN    27  // IN1 del YW Robot → ventilador
+#define TRIG_PIN   5
+#define ECHO_PIN   18
 #define DETECTION_DISTANCE_CM 45
 
 WebServer server(80);
-String cam_ip = "";
-bool ledState = false;
+bool bulbOn         = false;
+bool fanOn          = false;
 bool motionDetected = false;
 float lastDistanceCm = -1;
 
 void sendCorsHeaders() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Origin",  "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-void handleCamIp() {
+// ── Relay ─────────────────────────────────────────────────────────────────────
+
+void setBulb(bool on) {
+  bulbOn = on;
+  digitalWrite(LED_EXT,   on ? HIGH : LOW);
+  digitalWrite(LED_BOARD, on ? HIGH : LOW);
+  Serial.println(on ? "LED ENCENDIDO" : "LED APAGADO");
+}
+
+// ── Ventilador ────────────────────────────────────────────────────────────────
+
+void setFan(bool on) {
+  fanOn = on;
+  digitalWrite(FAN_PIN, on ? LOW : HIGH);  // módulo relé activo en LOW
+  Serial.println(on ? "VENTILADOR ON" : "VENTILADOR OFF");
+}
+
+// POST /api/fan  → con body {"state": true/false} establece; sin body, togglea
+// GET  /api/fan  → devuelve estado actual
+void handleFan() {
   sendCorsHeaders();
-  
   if (server.method() == HTTP_POST) {
     String body = server.arg("plain");
-    int ipIndex = body.indexOf("\"ip\":");
-    if (ipIndex >= 0) {
-      int start = body.indexOf("\"", ipIndex + 5) + 1;
-      int end = body.indexOf("\"", start);
-      if (start > 0 && end > start) {
-        cam_ip = body.substring(start, end);
-        Serial.println("IP de CAM recibida: " + cam_ip);
-      }
-    }
-    server.send(200, "application/json", "{\"status\": \"ok\"}");
-  } else {
-    String json = "{\"ip\": \"" + cam_ip + "\"}";
-    server.send(200, "application/json", json);
+    if (body.indexOf("\"state\"") >= 0)
+      setFan(body.indexOf("true") >= 0);
+    else
+      setFan(!fanOn);
   }
+  server.send(200, "application/json",
+              "{\"fan\": " + String(fanOn ? "true" : "false") + "}");
 }
 
-void handleOptions() {
+// POST /api/led  → con body {"state": true/false} establece; sin body, togglea
+// GET  /api/led  → devuelve estado actual
+void handleBulb() {
   sendCorsHeaders();
-  server.send(200, "text/plain", "");
-}
 
-void registerToBackend() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  
-  HTTPClient http;
-  http.begin(String(backend_url) + "/register");
-  http.addHeader("Content-Type", "application/json");
-  
-  String payload = "{\"device_type\": \"bridge\", \"ip\": \"" + WiFi.localIP().toString() + "\"}";
-  int httpCode = http.POST(payload);
-  
-  if (httpCode == 200) {
-    String response = http.getString();
-    Serial.println("Registro al backend: " + response);
-  } else {
-    Serial.print("Error registro bridge: ");
-    Serial.println(httpCode);
-  }
-  http.end();
-}
-
-void handleLedToggle() {
-  sendCorsHeaders();
-  
-  if (cam_ip != "") {
-    HTTPClient http;
-    String cam_url = "http://" + cam_ip + "/api/led";
-    http.begin(cam_url);
-    http.addHeader("Content-Type", "application/json");
-    
-    int httpCode = http.POST("");
-    if (httpCode == 200) {
-      String response = http.getString();
-      server.send(200, "application/json", response);
+  if (server.method() == HTTP_POST) {
+    String body = server.arg("plain");
+    if (body.indexOf("\"state\"") >= 0) {
+      // El backend envía el estado deseado directamente → sin riesgo de desync
+      bool desired = (body.indexOf("true") >= 0);
+      setBulb(desired);
     } else {
-      server.send(500, "application/json", "{\"error\": \"Failed to toggle LED on CAM\"}");
+      // Botón manual desde el frontend → toggle
+      setBulb(!bulbOn);
     }
-    http.end();
-  } else {
-    server.send(500, "application/json", "{\"error\": \"CAM IP not known\"}");
   }
+
+  String json = "{\"led\": " + String(bulbOn ? "true" : "false") + "}";
+  server.send(200, "application/json", json);
 }
 
-void handleLedStatus() {
-  sendCorsHeaders();
-  
-  if (cam_ip != "") {
-    HTTPClient http;
-    String cam_url = "http://" + cam_ip + "/api/led";
-    http.begin(cam_url);
-    
-    int httpCode = http.GET();
-    if (httpCode == 200) {
-      String response = http.getString();
-      server.send(200, "application/json", response);
-    } else {
-      server.send(500, "application/json", "{\"error\": \"Failed to get LED status from CAM\"}");
-    }
-    http.end();
-  } else {
-    server.send(500, "application/json", "{\"error\": \"CAM IP not known\"}");
-  }
-}
+// ── Sensor de distancia ───────────────────────────────────────────────────────
 
 void handleMotion() {
   sendCorsHeaders();
@@ -122,91 +90,89 @@ void handleMotion() {
   server.send(200, "application/json", json);
 }
 
-void handleRoot() {
-  String html = "<html><head><title>ESP32 Bridge</title></head><body>";
-  html += "<h1>ESP32 Bridge</h1>";
-  html += "<p>ESP32-CAM IP: " + cam_ip + "</p>";
-  html += "<p><a href='/cam_ip'>Ver IP en JSON</a></p>";
-  html += "</body></html>";
-  server.send(200, "text/html", html);
+// ── Registro al backend ───────────────────────────────────────────────────────
+
+void registerToBackend() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  http.begin(String(backend_url) + "/register");
+  http.addHeader("Content-Type", "application/json");
+  String payload = "{\"device_type\": \"bridge\", \"ip\": \"" + WiFi.localIP().toString() + "\"}";
+  int code = http.POST(payload);
+  Serial.println(code == 200 ? "✅ Bridge registrado" : "❌ Error registro bridge: " + String(code));
+  http.end();
 }
+
+// ── OPTIONS (CORS preflight) ──────────────────────────────────────────────────
+
+void handleOptions() {
+  sendCorsHeaders();
+  server.send(200, "text/plain", "");
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
-  Serial.println();
 
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
+  pinMode(LED_BOARD, OUTPUT); digitalWrite(LED_BOARD, LOW);
+  pinMode(LED_EXT,   OUTPUT); digitalWrite(LED_EXT,   LOW);
+  pinMode(FAN_PIN,   OUTPUT); digitalWrite(FAN_PIN,   HIGH); // relay abierto al arrancar
+  pinMode(TRIG_PIN,  OUTPUT); digitalWrite(TRIG_PIN,  LOW);
+  pinMode(ECHO_PIN,  INPUT);
 
   WiFi.begin(ssid, password);
-  Serial.print("Conectando a WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.println("WiFi conectado!");
-  Serial.print("IP ESP32: ");
-  Serial.println(WiFi.localIP());
+  Serial.print("Conectando WiFi");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nWiFi OK — IP: " + WiFi.localIP().toString());
 
   if (MDNS.begin(hostname)) {
-    Serial.println("mDNS iniciado: http://esp32-bridge.local");
     MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS: http://esp32-bridge.local");
   }
 
-  server.on("/", handleRoot);
-  server.on("/api/cam_ip", handleCamIp);
-  server.on("/api/cam_ip", HTTP_OPTIONS, handleOptions);
-  server.on("/api/led", HTTP_POST, handleLedToggle);
-  server.on("/api/led", HTTP_OPTIONS, handleOptions);
-  server.on("/api/led", HTTP_GET, handleLedStatus);
-  server.on("/api/motion", HTTP_GET, handleMotion);
+  server.on("/api/led",    HTTP_GET,     handleBulb);
+  server.on("/api/led",    HTTP_POST,    handleBulb);
+  server.on("/api/led",    HTTP_OPTIONS, handleOptions);
+  server.on("/api/fan",    HTTP_GET,     handleFan);
+  server.on("/api/fan",    HTTP_POST,    handleFan);
+  server.on("/api/fan",    HTTP_OPTIONS, handleOptions);
+  server.on("/api/motion", HTTP_GET,     handleMotion);
   server.on("/api/motion", HTTP_OPTIONS, handleOptions);
 
   server.begin();
-  Serial.println("Servidor ESP32 iniciado!");
-  
+  Serial.println("Servidor ESP32 listo");
+
   delay(1000);
   registerToBackend();
 }
 
+// ── Loop ──────────────────────────────────────────────────────────────────────
+
 void loop() {
   server.handleClient();
 
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(4);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
+  // HC-SR04
+  digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(4);
+  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH, 23500); // timeout = ~400cm máximo
-  lastDistanceCm = (duration > 0) ? (duration * 0.034) / 2.0 : -1;
-
+  long duration = pulseIn(ECHO_PIN, HIGH, 23500);
+  lastDistanceCm = (duration > 0) ? (duration * 0.034f) / 2.0f : -1;
   motionDetected = (lastDistanceCm > 0 && lastDistanceCm <= DETECTION_DISTANCE_CM);
 
-  static unsigned long lastReport = 0;
-  unsigned long now = millis();
-  if (now - lastReport >= 500) {  // Reportar cada 500ms al navegador
-    Serial.print("duration raw: ");
-    Serial.print(duration);
-    Serial.print(" us | Distancia: ");
-    if (lastDistanceCm >= 0) {
-      Serial.print(lastDistanceCm, 1);
-      Serial.println(" cm");
-    } else {
-      Serial.println("sin lectura");
-    }
-    lastReport = now;
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog >= 500) {
+    lastLog = millis();
+    if (lastDistanceCm >= 0)
+      Serial.printf("Dist: %.1f cm | motion: %s | bulb: %s\n",
+                    lastDistanceCm,
+                    motionDetected ? "SI" : "no",
+                    bulbOn        ? "ON" : "off");
   }
 
-  delay(60); // el HC-SR04 necesita mínimo 60ms entre mediciones
+  delay(60);  // mínimo HC-SR04
 
-  static unsigned long lastBackendReport = 0;
-  if (millis() - lastBackendReport > 60000) {
-    lastBackendReport = millis();
-    registerToBackend();
-  }
+  static unsigned long lastReg = 0;
+  if (millis() - lastReg > 60000) { lastReg = millis(); registerToBackend(); }
 }
