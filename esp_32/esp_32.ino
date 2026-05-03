@@ -205,7 +205,7 @@ void loop() {
   delay(60); // el HC-SR04 necesita mínimo 60ms entre mediciones
 
   static unsigned long lastBackendReport = 0;
-  if (millis() - lastBackendReport > 10000) {
+  if (millis() - lastBackendReport > 60000) {
     lastBackendReport = millis();
     registerToBackend();
   }

@@ -209,7 +209,7 @@ void loop() {
   server.handleClient();
 
   static unsigned long lastIpSent = 0;
-  if (millis() - lastIpSent > 5000) {
+  if (millis() - lastIpSent > 60000) {
     sendIpToBackend();
     lastIpSent = millis();
   }
