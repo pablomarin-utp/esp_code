@@ -26,7 +26,8 @@ const char* password = "10028370";
 #define PCLK_GPIO_NUM     22
 #define LED_PIN           4
 
-const char* backend_url = "http://192.168.1.100:8000/api/v1/recognize";
+const char* backend_url = "https://sternum-untaxed-vigorous.ngrok-free.dev/api/v1/esp";
+const char* backend_recognize_url = "https://sternum-untaxed-vigorous.ngrok-free.dev/api/v1";
 
 WebServer server(80);
 String esp32_ip = "";
@@ -76,14 +77,14 @@ void sendFrameToBackend(camera_fb_t* fb) {
 }
 
 void handleStream() {
-  WiFiClient* client = server.client();
+  WiFiClient client = server.client();
   String response = "HTTP/1.1 200 OK\r\n";
   response += "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n";
   response += "Access-Control-Allow-Origin: *\r\n";
   response += "\r\n";
-  client->print(response);
+  client.print(response);
 
-  while (client->connected()) {
+  while (client.connected()) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
       break;
@@ -93,9 +94,9 @@ void handleStream() {
     header += "Content-Type: image/jpeg\r\n";
     header += "Content-Length: " + String(fb->len) + "\r\n";
     header += "\r\n";
-    client->print(header);
-    client->write(fb->buf, fb->len);
-    client->print("\r\n");
+    client.print(header);
+    client.write(fb->buf, fb->len);
+    client.print("\r\n");
 
     esp_camera_fb_return(fb);
     delay(50);  // ~20fps max
@@ -141,19 +142,19 @@ void handleLedStatus() {
   server.send(200, "application/json", json);
 }
 
-void sendIpToEsp32() {
+void sendIpToBackend() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin("http://esp32-bridge.local/api/cam_ip");
+    http.begin(String(backend_url) + "/register");
     http.addHeader("Content-Type", "application/json");
     
-    String payload = "{\"ip\": \"" + WiFi.localIP().toString() + "\"}";
+    String payload = "{\"device_type\": \"cam\", \"ip\": \"" + WiFi.localIP().toString() + "\"}";
     int httpCode = http.POST(payload);
-    Serial.printf("IP enviada a puente. HTTP: %d\n", httpCode);
+    Serial.printf("Registro al backend: %d\n", httpCode);
     if (httpCode < 0) {
-      Serial.println("Error de conexion al puente");
+      Serial.println("Error de conexion al backend");
     } else if (httpCode == 200) {
-      Serial.println("IP enviada correctamente");
+      Serial.println("Registrado correctamente");
     }
     http.end();
   } else {
@@ -191,7 +192,7 @@ void setup() {
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
 
-  sendIpToEsp32();
+  sendIpToBackend();
 
   server.on("/", HTTP_GET, handleStream);
   server.on("/stream", HTTP_GET, handleStream);
@@ -209,7 +210,7 @@ void loop() {
 
   static unsigned long lastIpSent = 0;
   if (millis() - lastIpSent > 5000) {
-    sendIpToEsp32();
+    sendIpToBackend();
     lastIpSent = millis();
   }
 }

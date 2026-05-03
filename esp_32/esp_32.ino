@@ -7,6 +7,7 @@ const char* ssid = "MARIN";
 const char* password = "10028370";
 
 const char* hostname = "esp32-bridge";
+const char* backend_url = "https://sternum-untaxed-vigorous.ngrok-free.dev/api/v1/esp";
 
 #define LED_PIN 2
 #define TRIG_PIN 5
@@ -49,6 +50,26 @@ void handleCamIp() {
 void handleOptions() {
   sendCorsHeaders();
   server.send(200, "text/plain", "");
+}
+
+void registerToBackend() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  HTTPClient http;
+  http.begin(String(backend_url) + "/register");
+  http.addHeader("Content-Type", "application/json");
+  
+  String payload = "{\"device_type\": \"bridge\", \"ip\": \"" + WiFi.localIP().toString() + "\"}";
+  int httpCode = http.POST(payload);
+  
+  if (httpCode == 200) {
+    String response = http.getString();
+    Serial.println("Registro al backend: " + response);
+  } else {
+    Serial.print("Error registro bridge: ");
+    Serial.println(httpCode);
+  }
+  http.end();
 }
 
 void handleLedToggle() {
@@ -147,6 +168,9 @@ void setup() {
 
   server.begin();
   Serial.println("Servidor ESP32 iniciado!");
+  
+  delay(1000);
+  registerToBackend();
 }
 
 void loop() {
@@ -180,13 +204,9 @@ void loop() {
 
   delay(60); // el HC-SR04 necesita mínimo 60ms entre mediciones
 
-  if (Serial.available() > 0) {
-    String data = Serial.readStringUntil('\n');
-    data.trim();
-    if (data.startsWith("IP:")) {
-      cam_ip = data.substring(3);
-      cam_ip.trim();
-      Serial.println("IP de ESP32-CAM recibida: " + cam_ip);
-    }
+  static unsigned long lastBackendReport = 0;
+  if (millis() - lastBackendReport > 10000) {
+    lastBackendReport = millis();
+    registerToBackend();
   }
 }
