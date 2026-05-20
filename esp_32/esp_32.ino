@@ -74,11 +74,17 @@ void sendCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-void setBulb(bool on) {
-  bulbOn = on;
-  digitalWrite(LED_EXT,   on ? HIGH : LOW);
+// LED interno (LED_BOARD, pin 2): se controla LOCALMENTE en el loop según el sensor.
+// LED externo (LED_EXT, pin 26): solo lo controla el backend tras reconocer una cara.
+
+void setLedInternal(bool on) {
   digitalWrite(LED_BOARD, on ? HIGH : LOW);
-  Serial.println(on ? "💡 LED ENCENDIDO" : "💡 LED APAGADO");
+}
+
+void setLedExternal(bool on) {
+  bulbOn = on;
+  digitalWrite(LED_EXT, on ? HIGH : LOW);
+  Serial.println(on ? "💡 BOMBILLO EXTERNO ENCENDIDO" : "💡 BOMBILLO EXTERNO APAGADO");
 }
 
 void setFan(bool on) {
@@ -121,14 +127,15 @@ void registerToBackend() {
 
 void handleOptions() { sendCorsHeaders(); server.send(200, "text/plain", ""); }
 
+// /api/led controla SOLO el bombillo externo. El LED interno responde al sensor local.
 void handleBulb() {
   sendCorsHeaders();
   if (server.method() == HTTP_POST) {
     String body = server.arg("plain");
     if (body.indexOf("\"state\"") >= 0)
-      setBulb(body.indexOf("true") >= 0);
+      setLedExternal(body.indexOf("true") >= 0);
     else
-      setBulb(!bulbOn);
+      setLedExternal(!bulbOn);
   }
   server.send(200, "application/json",
               "{\"led\": " + String(bulbOn ? "true" : "false") + "}");
@@ -255,7 +262,15 @@ void loop() {
   digitalWrite(TRIG_PIN, LOW);
   long duration = pulseIn(ECHO_PIN, HIGH, 23500);
   lastDistanceCm = (duration > 0) ? (duration * 0.034f) / 2.0f : -1;
-  motionDetected = (lastDistanceCm > 0 && lastDistanceCm <= DETECTION_DISTANCE_CM);
+  bool newMotion = (lastDistanceCm > 0 && lastDistanceCm <= DETECTION_DISTANCE_CM);
+
+  // Reflejo INMEDIATO del sensor al LED interno (no espera al backend).
+  // En el flanco de movimiento imprimimos el evento.
+  if (newMotion != motionDetected) {
+    setLedInternal(newMotion);
+    Serial.println(newMotion ? "📡 MOVIMIENTO → LED interno ON" : "🌫️  Sin movimiento → LED interno OFF");
+  }
+  motionDetected = newMotion;
 
   static unsigned long lastLog = 0;
   if (millis() - lastLog >= 500) {
